@@ -14,7 +14,6 @@
 # Author:
 #     Karol Augustin <karol@augustin.pl>
 #
-#ver 0.3.2
 
 import numpy
 import pylab
@@ -25,7 +24,7 @@ import scipy
 
 
 
-class SignalML:
+class sva2py:
 #Mozna podac jeden parametr jako istotny czlon nazwy plikow, rozszezenia zostana dodane automatycznie, lub dwie nazwy z rozszezeniami oddzielnie dla pliku raw i xml.
     def __init__(self, file_name, xml_file_name = False):
         if xml_file_name:
@@ -57,7 +56,7 @@ class SignalML:
             cl = cl + '   Channel '+ str(v)+ ': ' + self.cl[i].text + '\n'
             v = v + 1
         return intro + '\n' + cc + '\n' + sf + '\n' + sc + '\n' + st + '\n' + bo + '\n' + fsts + '\n' + cl + '\n'
-    def channel(self, number, type=None):
+    def channel(self, number, type='name'):
 #Return signal from specified channel
         if type == 'int' or type == None:
             number = int(number)    
@@ -74,7 +73,7 @@ class SignalML:
     
     def montage(self, name, type='linkedears', filtr='high', start=None, stop=None, mixed=False):
         if filtr:
-            [b,a] = butter(1,1.0/(self.samplingFrequency()/2.0), btype='high')
+            [b,a] = butter(3,1.0/(self.samplingFrequency()/2.0), btype='high')
         if filtr == 'alpha':
             Wn = [8.5/(128/2.0),14.5/(128/2.0)]
             [g,h] = cheby2(4, 20, Wn, btype='bandpass', analog=0, output='ba')
@@ -201,7 +200,7 @@ class SignalML:
             if self.cl[i].text == 'TRIGGER':
                 z = i
                 break
-        trigg = self.channel(z)
+        trigg = self.channel(z, type='int')
         triggers = []
         c = []
         for i in range(0, len(trigg)):
@@ -211,3 +210,36 @@ class SignalML:
             if trigg[k-1] != 1:
                 triggers.append(k)
         return triggers
+
+    def trigger2(self, c, type='name'):
+        z =[]
+        q = []
+        x = self.channel(c, type=type)
+        x = x - min(x)
+        #a = (max(x) - min(x))/2.
+        a = numpy.average(x)
+        for i in range(1,len(x)):
+            if x[i] > a and x[i-1]<a:
+                z.append(i)
+#        for k in z:
+#            if x[k-1] < a:
+#                q.append(k)
+        return z #q
+    def trigger3(self, c1, c2, type='name'):
+        r1 = []
+        r2 = []
+        t1 = self.trigger2(c1, type=type)
+        t2 = self.trigger2(c2, type=type)
+        if len(t1)>len(t2):
+            t1b = t1
+            t2b = t2
+        else:
+            t2b = t1
+            t1b = t2
+
+        for i in t1b:
+            if t2b.count(i) == 1:
+                r2.append(i)
+            else:
+                r1.append(i)
+        return r1, r2
