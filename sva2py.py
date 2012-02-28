@@ -1,12 +1,31 @@
-'''Modul obsluguje sygnal zapisany w formacie SignalML (http://signalml.org/) wraz z plikiem xml opisujacym jego zawartosc. Poszczegolne metody zwracaja dane pozyskane z pliku xmlowego w formacie umozliwiajacym ich wykozystanie podczas analizy sygnalu. Mozliwe jest tez pozyskanie za pomoca klasy poszczegolnych kanalow zapisanych w pliku raw, jak rowniez np. numerow probek rozpoczynajacych kazde wystapienie bodzca (trigger). 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Author:
+#     Karol Augustin <karol@augustin.pl>
+#
+#ver 0.3.2
 
-
-'''
 import numpy
 import pylab
 from lxml import etree
+from scipy.signal import filtfilt, butter, freqz, lfilter, cheb1ord, cheby2
+import scipy
 
-class sva2py:
+
+
+
+class SignalML:
 #Mozna podac jeden parametr jako istotny czlon nazwy plikow, rozszezenia zostana dodane automatycznie, lub dwie nazwy z rozszezeniami oddzielnie dla pliku raw i xml.
     def __init__(self, file_name, xml_file_name = False):
         if xml_file_name:
@@ -38,12 +57,120 @@ class sva2py:
             cl = cl + '   Channel '+ str(v)+ ': ' + self.cl[i].text + '\n'
             v = v + 1
         return intro + '\n' + cc + '\n' + sf + '\n' + sc + '\n' + st + '\n' + bo + '\n' + fsts + '\n' + cl + '\n'
-    def channel(self, number):
+    def channel(self, number, type=None):
 #Return signal from specified channel
-        if int(number)>= int(self.cc):
-            print 'Error: Channels available: 0 to ' + str(int(self.cc) - 1)
-            return None
-        return self.s[int(number)::int(self.cc)]  
+        if type == 'int' or type == None:
+            number = int(number)    
+            if number >= int(self.cc):
+                raise ValueError     #'Error: Channels available: 0 to ' + str(int(self.cc) - 1)            
+            return self.s[int(number)::int(self.cc)]
+        elif type == 'str' or type == 'name':
+            i = 0
+            while self.cl[i].text != number:
+                i += 1
+            return self.s[i::int(self.cc)] 
+        else:
+            return None # raise something
+    
+    def montage(self, name, type='linkedears', filtr='high', start=None, stop=None, mixed=False):
+        if filtr:
+            [b,a] = butter(1,1.0/(self.samplingFrequency()/2.0), btype='high')
+        if filtr == 'alpha':
+            Wn = [8.5/(128/2.0),14.5/(128/2.0)]
+            [g,h] = cheby2(4, 20, Wn, btype='bandpass', analog=0, output='ba')
+        if type == 'linkedears':
+            s = self.channel(name, 'name')
+            #s = filtfilt(b,a,s - (self.channel('A1', 'name') + self.channel('A2', 'name'))/2)
+            if start and stop: 
+                t = filtfilt(b,a,s[start:stop] - (self.channel('A1', 'name')[start:stop] + self.channel('A2', 'name')[start:stop])/2)
+                if filtr == 'alpha': t = filtfilt(g,h,t)
+            elif stop:
+                t = filtfilt(b,a,s[:stop] - (self.channel('A1', 'name')[:stop] + self.channel('A2', 'name')[:stop])/2)
+                if filtr == 'alpha': t = filtfilt(g,h,t)
+            elif start:
+                t = filtfilt(b,a,s[start:] - (self.channel('A1', 'name')[start:] + self.channel('A2', 'name')[start:])/2)
+            else:
+                t = filtfilt(b,a,s - (self.channel('A1', 'name') + self.channel('A2', 'name'))/2)
+                if filtr == 'alpha': t = filtfilt(g,h,t)
+            if mixed: t = self.mixer(t)
+        return t
+
+    def autocorrelate(self, c, montage='linkedears', filtr='high', start=None, stop=None, norm=True, mixed=False):
+        if montage == 'direct':
+            signal = c
+        else:
+            signal = self.montage(c, type=montage, filtr=filtr, start = start, stop = stop, mixed=mixed)
+        correlation = numpy.correlate(signal, signal, 'full')
+        if norm:
+            return correlation/max(correlation)
+        else:
+            return correlation
+
+    def correlate(self, c1, c2, montage='linkedears', filtr='high', start=None, stop=None, norm=True, mixed=False):
+        if montage == 'direct':
+            signal1 = c1
+            signal2 = c2
+        else:
+            signal1 = self.montage(c1, type=montage, filtr=filtr, start=start, stop=stop, mixed=mixed)
+            signal2 = self.montage(c2, type=montage, filtr=filtr, start=start, stop=stop, mixed=mixed)
+        correlation = numpy.correlate(signal1, signal2, 'full')
+        if norm: correlation = correlation/(numpy.std(signal1)*numpy.std(signal2))/len(signal1)
+        return correlation
+    
+    def periodogram(self, c, filtr='high', start=None, stop=None, montage='linkedears', window='blackman', use=True):
+        if use:
+            s = self.montage(c, filtr=filtr, start=start, stop=stop, type=montage)
+            okno = self.window(window, len(s))
+        else:
+            okno = window
+            s = c
+        F_samp = self.samplingFrequency()
+        s = s*okno
+        N_fft = len(s)
+        S = numpy.fft.rfft(s,N_fft)#/numpy.sqrt(N_fft)
+        P = S*S.conj()/numpy.sum(okno**2)
+    
+        P = P.real 
+        F = numpy.linspace(0, F_samp/2., len(S))
+        return (numpy.fft.fftshift(P),numpy.fft.fftshift(F))
+
+
+    def fft(self, signal):
+        s = numpy.fft.rfft(signal)
+        f = numpy.linspace(0, self.samplingFrequency()/2., len(s))
+        return numpy.abs(s), f
+
+    def window(self, name, N):
+        if name == 'blackman':
+            window = numpy.blackman(N)
+        elif name == 'hamming':
+            window = numpy.hamming(N)
+        return window
+
+    def pwelch(self, c, window='blackman', filtr='high', przesuniecie=1/10., dlugosc=1/8., start=None, stop=None, montage='linkedears'):
+        Fs = self.samplingFrequency()
+        s = self.montage(c, filtr=filtr, type=montage, start=start, stop=stop)
+        N = len(s)
+        przesuniecie = przesuniecie*dlugosc*N
+        okienko = self.window(window, dlugosc*N)
+        N_s = len(okienko)
+        start_fragmentow = numpy.arange(0,N-N_s+1,przesuniecie)
+        ile_fragmentow = len(start_fragmentow)
+        print 'Fragmentow: ', ile_fragmentow
+        ile_przekrycia = N_s*ile_fragmentow/float(N)
+        P_sredni = numpy.zeros(N_s/2+1)
+        for i in range(ile_fragmentow):
+            s_fragment = s[start_fragmentow[i]:start_fragmentow[i]+N_s]
+            (P, F) = self.periodogram(s_fragment, window=okienko, use=False)
+            #print numpy.shape(P), numpy.shape(P_sredni)
+            P_sredni += P
+        return P_sredni/ile_przekrycia, F
+
+    def mixer(self, x):
+        y = scipy.signal.irfft(numpy.abs(numpy.fft.rfft(x))*scipy.signal.exp(1j*numpy.random.random(len(x)/2+1)*2*numpy.pi))
+        #y = numpy.real(scipy.signal.ifft(numpy.abs(scipy.signal.fft(x))*scipy.signal.exp(1j*numpy.random.random(len(x))*2*numpy.pi)))
+        return y
+
     def signal(self):
 #Return whole signal
         return self.s
@@ -84,7 +211,3 @@ class sva2py:
             if trigg[k-1] != 1:
                 triggers.append(k)
         return triggers
-
-
-projekt = SignalML('ania-michalska-trigger1.raw', 'ania-michalska-trigger1.xml')
-print projekt.channel(2)
