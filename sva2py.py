@@ -13,7 +13,7 @@
 #
 # Author:
 #     Karol Augustin <karol@augustin.pl>
-#
+# git repository: http://git.nimitz.pl
 
 import numpy
 import pylab
