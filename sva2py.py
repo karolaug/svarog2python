@@ -243,3 +243,44 @@ class sva2py:
             else:
                 r1.append(i)
         return r1, r2
+
+    def get_p300_tags(self, idx=1, rest=False, samples = True, Fs = None):
+        from xml.dom import minidom
+
+        """Returns tags with words from different groups
+        
+        Parameters:
+        -----------
+        idx [= 1]: int
+            defines which tags to return
+        samples : bool
+            if true, positions will be returned as samples not in seconds
+        Fs : float or None
+            the sampling frequency used to convert positions to samples
+        
+        Returns:
+        --------
+        exp_list : list
+            a list of positions of target
+        """
+
+        ftag = minidom.parse(str(self.file_name)+'.tag')
+        tag_list = [e for e in ftag.getElementsByTagName('tag') \
+                    if e.attributes['name'].value == 'blink']
+        exp_list = []
+
+        fsp = self.samplingFrequency()
+        if(samples):
+            if Fs != None:
+                fsp = Fs
+        else: fsp = 1.0
+        for e in tag_list:
+            index = e.getElementsByTagName('index')[0].firstChild.data
+            if not rest:
+                if int(index) == idx:
+                    exp_list.append(float(e.attributes['position'].value))
+            else:
+                if int(index) !=  idx:
+                    exp_list.append(float(e.attributes['position'].value))
+        
+        return numpy.array(exp_list) * fsp 
