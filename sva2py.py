@@ -262,6 +262,7 @@ class sva2py:
         --------
         exp_list : list
             a list of positions of target
+	Author: Piotr Milanowski <pmila@fuw.edu.pl>, Faculty of Physics, University of Warsaw
         """
 
         ftag = minidom.parse(str(self.file_name)+'.tag')
